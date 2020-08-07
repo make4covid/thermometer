@@ -1,5 +1,5 @@
 /*
- * M4C_Thermometer.c
+ * M4C_Thermometer/src/main.c
  *
  * Created: 6/9/2020 10:18:34 PM
  * Author : Jan Kok
@@ -7,6 +7,7 @@
 
 // F_CPU should be defined in the project settings so the definition gets passed into the compiler command line.
 //#define F_CPU 1000000    // CPU clock frequency, Hz.
+// The Release build environment should define NDEBUG. The Debug environment should define DEBUG.
 
 #include <avr/io.h>
 #include <util/delay.h>
@@ -22,20 +23,22 @@
 #ifdef NDEBUG
 
 // ***** Set parameters for Release (non-debug) firmware here: *****
-#define SCALE DEG_F    // Set this to DEG_F or DEG_C to select which temperature scale to display readings.
-#define MAX_DEG 1099   // Above 109.9 deg F is displayed as "HI"
-#define MIN_DEG 600    // Below 60.0 deg F is displayed as "LO"
-#define HOLD_TIME_MS 5000  // How long (ms) to display temperature reading if button is not held down.
+#define SCALE DEG_F          // Set this to DEG_F or DEG_C to select which temperature scale to display readings.
+#define DECIMALS TENTHS      // In Release, display temperature as [1]xx.x in deg F or C, depending on SCALE
+#define MAX_DEG 1099         // Above 109.9 deg F is displayed as "HI"
+#define MIN_DEG 600          // Below 60.0 deg F is displayed as "LO"
+#define HOLD_TIME_MS 5000    // How long (ms) to display temperature reading if button is not held down.
 
 #else
 
 // Set parameters for DEBUG firmware.
-#define SCALE DEG_C    // Always use DEG_C while debugging.
-#define MAX_DEG 4999   // Above 49.99 deg C is displayed as "HI"
-#define MIN_DEG -999   // Below -9.99 deg C is displayed as "LO"
-#define HOLD_TIME_MS 2000  // How long (ms) to display temperature reading if button is not held down.
-//#define NO_ADC         // Optionally define this to debug ADC current draw issues.
-//#define NO_SENSOR      // Optionally define this to debug MLX sensor current draw or other issues.
+#define SCALE DEG_C          // Always use DEG_C while debugging.
+#define DECIMALS HUNDREDTHS  // In DEBUG, display temperature as xx.xx (deg C)
+#define MAX_DEG 4999         // Above 49.99 deg C is displayed as "HI"
+#define MIN_DEG -999         // Below -9.99 deg C is displayed as "LO"
+#define HOLD_TIME_MS 2000    // How long (ms) to display temperature reading if button is not held down.
+//#define NO_ADC             // Optionally define this to debug ADC current draw issues.
+//#define NO_SENSOR          // Optionally define this to debug MLX sensor current draw or other issues.
 
 #endif
 
@@ -477,7 +480,7 @@ static uint16_t ReadSensor(uint8_t regaddr, uint16_t *rawvalue)
 
 // Convert raw temperature reading from sensor to tenths or hundredths
 // of a degree C or F and set up to display it.
-static void Convert(uint16_t raw, int16_t max_deg, int16_t min_deg, uint8_t decimals, uint8_t scale, int32_t avgVcc)
+static uint16_t Convert(uint16_t raw, int16_t max_deg, int16_t min_deg, uint8_t decimals, uint8_t scale, int32_t avgVcc)
 {
 	int32_t value = raw * 2; // Temp in centiK.
 	value -= 27315;          // Temp in centidegrees C.
@@ -499,11 +502,12 @@ static void Convert(uint16_t raw, int16_t max_deg, int16_t min_deg, uint8_t deci
 	}
 	// Binary to decimal convert and send to display buffer.
 	DecimalDisplayPrep(value, max_deg, min_deg, decimals+1, 1<<decimals);
+	return value;  // Return the integer value that gets displayed, for debugging.
 }
 
 /////////////////////////////// Battery check
 
-#define VREFPWR_BIT 2    // The voltage ref used for low battery detection is powered by PORTB bit 2.
+#define VREFPWR_BIT 1    // The voltage ref used for low battery detection is powered by PORTB bit 1.
 #define ADCIN_BIT 0      // The voltage ref is applied to ADC0 input.
 
 // The TLV431A precision shunt regulator is used as the ADC reference voltage, connected to the ADC0 pin.
@@ -612,8 +616,8 @@ int main(void)
 {
 	// Initialize port B.
 	// Bit 0 is the button input, high = button pressed.
-	// Bit 1 is unused.
-	// Bit 2 supplies power to voltage reference.
+	// Bit 1 supplies power to voltage reference.
+	// Bit 2 is unused.
 	// Bit 3 is MOSI input (ISP connector to AVR).
 	// Bit 4 is MISO output (AVR to ISP connector).
 	// Bit 5 is SCK input (ISP connector to AVR).
@@ -724,14 +728,17 @@ int main(void)
 		cli();                    // Stop responding to interrupts.
 
 		// The button has been pushed! Let's get busy!
+#ifdef DEBUG
+		uint16_t adc00 = GetBatADC();  // Get initial ADC reading. adc00 = 1024*Vref/Vcc.
+#endif
 		DecimalOn(100);               // Turn on a decimal point to create a 20mA load for checking battery level.
-		uint16_t adc1 = GetBatADC();  // Get initial ADC reading. adc1 = 1024*Vref/Vcc.
+		uint16_t adc0 = GetBatADC();  // Get initial ADC reading. adc0 = 1024*Vref/Vcc.
 		BlankDisplay();				  // Turn off the load.
 		
 		// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
 		// sensor, don't give a bad reading, DON'T EVEN WAKE UP SENSOR! Just flash "bAt" "LO" and go back to sleep.
-		if (adc1 > ADC_LOBAT_QUIT) {
-			DisplayBatLo(ADC2mv(adc1));
+		if (adc0 > ADC_LOBAT_QUIT) {
+			DisplayBatLo(ADC2mv(adc0));
 			continue;
 		}
 
@@ -741,7 +748,7 @@ int main(void)
 		// Read the Vcc voltage again, this time without the added 20mA load. Main purpose is to get the voltage as the sensor begins it's operations (calibration
 		// and then continuously reading temperatures). Note that GetBatADC still turns on shunt regulator (about 2mA) and waits about 1ms
 		// before reading Vcc voltage.
-		adc1 = GetBatADC();  // Get initial ADC reading. adc1 = 1024*Vref/Vcc.
+		uint16_t adc1 = GetBatADC();  // Get initial ADC reading. adc1 = 1024*Vref/Vcc.
 
 		// It's unlikely the battery check would fail here, but might as well check anyway...
 		// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
@@ -750,6 +757,10 @@ int main(void)
 			LoBatShutdown(adc1);
 			continue;
 		}
+
+#ifndef DEBUG
+
+		////////////////////////////// Beginning of normal Release (non-debug) code. Read and display temperature.
 		
 		// According to MLX data sheet, "After wake up the first data is available after 0.25 seconds (typ)."
 		// It's not clear how that relates to the IIR filter "settling times" shown below:
@@ -780,7 +791,79 @@ int main(void)
 			continue;
 		}
 
-#ifdef DEBUG		
+		// Power down the sensor now, BEFORE we start displaying stuff.
+		// (Display can drag down battery to the point that we can't shut down the sensor properly!)
+		MLXPowerDown();
+
+		adc1 = ADC2mv(adc1); // Convert ADC readings to millivolts.
+		adc2 = ADC2mv(adc2);
+		uint16_t avgVcc = (adc1 + adc2 + 1) / 2;
+
+		// Prepare to display the temperature reading.
+		Convert(raw_temp_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, avgVcc);
+
+		// Illuminate display for HOLD_TIME_MS milliseconds.
+		if (DisplayNms(HOLD_TIME_MS)) {
+			// We are here because user released and then pressed button again which we interpret to mean
+			// they want a new reading.
+			continue; // Go back around the main loop.
+		}
+		// If NewButtonState is 1, user has been holding the button down all this time. Continue displaying the temperature.
+		while (NewButtonState) {
+			DisplayNms(100);
+		}
+
+		if (avgVcc <= ADC_LOBAT_WARN_V) {
+			DisplayBatLo(avgVcc);
+			continue;
+		}
+
+		continue; // This is the end of the main while loop for non-debug code.
+
+#else
+
+		/////////////////////////////// Beginning of DEBUG code.
+
+ #if 1   // Beginning of "new" debug code. Read sensors and store in array. Use debugger to examine the values.
+ 
+#define N_READINGS 10
+		volatile uint16_t DebugData[N_READINGS*4 + 4];
+		uint16_t p = 0;        // Pointer for filling in DebugData array.
+		uint8_t err_flag = 0;  // Keep track of any errors we see.
+
+		DebugData[p++] = ADC2mv(adc00);  // Vdd voltage immediately after button push.
+		DebugData[p++] = ADC2mv(adc0);   // Vdd voltage after 20mA load for .1 seconds.
+		DebugData[p++] = ADC2mv(adc1);   // Vdd voltage immediately after waking up sensor.
+		
+		for (uint8_t i=0; i<N_READINGS; i++) {
+			// Read Vcc voltage.
+			uint16_t BatMv = ADC2mv(GetBatADC());
+			// Read object temperature.
+			uint16_t raw_temp_value2;
+			if (ReadSensor(RAMADDR_TOBJ1, &raw_temp_value2)) {
+				err_flag++;
+			}
+			// Do Vdd voltage compensation and convert raw temperature to centidegrees C.
+			uint16_t obj_temp = Convert(raw_temp_value2, MAX_DEG, MIN_DEG, DECIMALS, SCALE, BatMv);
+			// Get ambient (sensor) temperature, do Vdd voltage compensation and convert to centidegrees C.
+			uint16_t amb_temp_value;
+			if (ReadSensor(RAMADDR_TA, &amb_temp_value)) {
+				err_flag++;
+			}
+			uint16_t amb_temp = Convert(amb_temp_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, BatMv);
+			// Stuff values into DebugData array.
+			DebugData[p++] = BatMv;
+			DebugData[p++] = raw_temp_value2;
+			DebugData[p++] = obj_temp;
+			DebugData[p++] = amb_temp;
+			_delay_ms(100);  // First valid reading should come at .25 seconds?
+		}
+		DebugData[p++] = err_flag;
+		
+		continue; // End of main while loop.
+			
+ #else  // "Old" debug code. Take several readings, display them.
+ 
 		// Read the ambient (sensor's) temperature.
 		uint16_t amb_temp_value;
 		if (ReadSensor(RAMADDR_TA, &amb_temp_value)) {
@@ -791,9 +874,9 @@ int main(void)
 			error(1);
 			continue;
 		}
-		
+	
 		_delay_ms(1500); // See if there is some kind of settling.
-		
+	
 		// Read the object temperature again
 		uint16_t raw_temp_value2;
 		if (ReadSensor(RAMADDR_TOBJ1, &raw_temp_value2)) {
@@ -816,39 +899,27 @@ int main(void)
 			continue;
 		}
 		
-#endif
-
 		// Power down the sensor now, BEFORE we start displaying stuff.
 		// (Display can drag down battery to the point that we can't shut down the sensor properly!)
 		MLXPowerDown();
 
-#ifdef DEBUG
 		int16_t sag = adc1 - adc2;
 		DisplayInt(sag, 300);
-#endif
-		
 		adc1 = ADC2mv(adc1); // Convert ADC readings to millivolts.
 		adc2 = ADC2mv(adc2);
 		uint16_t avgVcc = (adc1 + adc2 + 1) / 2;
-#if DEBUG
+
 		// Display Vcc in volts.
 		DisplayVolts(avgVcc);
-#endif
 
 		// Prepare to display the temperature reading.
-#ifdef DEBUG
-#define DECIMALS HUNDREDTHS  // In DEBUG, display temperature as xx.xx (deg C)
-#else
-#define DECIMALS TENTHS      // In Release, display temperature as [1]xx.x in deg F or C, depending on SCALE
-#endif
+		#define DECIMALS HUNDREDTHS  // In DEBUG, display temperature as xx.xx (deg C)
 
-#ifdef DEBUG
 		// Display ambient (sensor's) temperature.
 		Convert(amb_temp_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, adc2);
 		DisplayNms(1000);
 		DisplayInt(amb_temp_value2 - amb_temp_value, 1000);
 		DisplayInt(raw_temp_value2 - raw_temp_value, 1000);
-#endif
 
 		Convert(raw_temp_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, avgVcc);
 
@@ -868,5 +939,8 @@ int main(void)
 			continue;
 		}
 
-	}  // Main while loop.
-}
+ #endif  // End of old debug code.
+#endif  // End of debug code.
+
+	}  // End of main while loop.
+} // End of main() function.
