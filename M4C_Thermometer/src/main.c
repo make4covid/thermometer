@@ -9,6 +9,7 @@
 //#define F_CPU 1000000    // CPU clock frequency, Hz.
 // The Release build environment should define NDEBUG. The Debug environment should define DEBUG.
 
+#include <stdbool.h>
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/sleep.h>
@@ -72,15 +73,6 @@ static int8_t ButtonJustPushed(void)
 	ButtonIsPushed();
 	return NewButtonState && !OldButtonState;
 }
-
-#if 0 // not needed?
-// Check and update button state. Return 1 if button has just transitioned to released state.
-static int8_t ButtonJustReleased(void)
-{
-	ButtonIsPushed();
-	return OldButtonState && !NewButtonState;
-}
-#endif
 
 ////////////////////////  Display stuff
 
@@ -157,8 +149,7 @@ static void DecimalDisplayPrep(int16_t num, int16_t max_num, int16_t min_num, in
         if (num > max_num) {
             DisplaySegments[i--] = H_SEGMENTS;
             DisplaySegments[i--] = I_SEGMENTS;
-        }
-        if (num < min_num) {
+        } else {
             DisplaySegments[i--] = L_SEGMENTS;
             DisplaySegments[i--] = O_SEGMENTS;
         }
@@ -169,12 +160,12 @@ static void DecimalDisplayPrep(int16_t num, int16_t max_num, int16_t min_num, in
         return;
     }
     // Handle negative numbers. May not work correctly for -32768, but that should be too small anyway.
-    int8_t minus = num < 0;
+    bool minus = num < 0;
     if (minus) {
         num = -num;
     }
     // Convert num to decimal digits and set up DisplaySegments.
-    int8_t digit_num = 0; // Digit position we are processing. 0 = L.S. digit.
+    int8_t digit_num = 0; // Digit position we are processing. 0 = least significant digit.
     do {
         int8_t digit_val = num % 10;
         int8_t segments = DigitToSegments[digit_val];
@@ -184,7 +175,7 @@ static void DecimalDisplayPrep(int16_t num, int16_t max_num, int16_t min_num, in
                 // We're in the leading zeros region. Display a blank or a minus sign as appropriate.
                 if (minus) {
                     segments = MINUS_SIGN_SEGMENTS;
-                    minus = 0; // Don't output any more minus signs.
+                    minus = false; // Don't output any more minus signs.
                 } else {
                     segments = BLANK_SEGMENTS;
                 }
@@ -478,8 +469,7 @@ static uint16_t ReadSensor(uint8_t regaddr, uint16_t *rawvalue)
 #define DEG_F 1
 #define DEG_C 0
 
-// Convert raw temperature reading from sensor to tenths or hundredths
-// of a degree C or F and set up to display it.
+// Convert raw temperature reading from sensor and Vcc voltage correction to tenths or hundredths of a degree C or F.
 static uint16_t Convert(uint16_t raw, int16_t max_deg, int16_t min_deg, uint8_t decimals, uint8_t scale, int32_t avgVcc)
 {
 	int32_t value = raw * 2; // Temp in centiK.
@@ -500,8 +490,6 @@ static uint16_t Convert(uint16_t raw, int16_t max_deg, int16_t min_deg, uint8_t 
 	} else {
 		value = -( (-value + divisor/2) / divisor);
 	}
-	// Binary to decimal convert and send to display buffer.
-	DecimalDisplayPrep(value, max_deg, min_deg, decimals+1, 1<<decimals);
 	return value;  // Return the integer value that gets displayed, for debugging.
 }
 
@@ -610,9 +598,63 @@ static void LoBatShutdown(uint16_t adc)
 	DisplayBatLo(ADC2mv(adc));
 }
 
-/////////////////////////////// Thermometer main()
+/////////////////////////////// Run states
 
-int main(void)
+typedef enum {
+	STARTUP_STATE,
+	SLEEP_STATE,
+	READ_STATE,
+	DISPLAY_STATE,
+	BAT_LO_STATE,
+	ERROR_STATE
+} RunState;
+
+// State that needs to be carried between the run states.
+RunState state;              // The current run state. Set to the _next_ run state by the TransitionX functions.
+uint16_t BatLo_Vcc_mv;       // Vcc voltage in millivolts. (Sent to BatLoState, for debugging.)
+int16_t Display_temperature; // Temperature to pass to DisplayState().
+uint16_t Display_testVcc;    // Vcc voltage to pass to DisplayState() for low battery warning test.
+uint8_t Error_num;           // Error number to pass to ErrorState().
+#ifdef DEBUG
+uint16_t adc00;              // First adc reading after button push, before  20mA load test.
+#endif
+
+static void TransitionStartupState(void)
+{
+	state = STARTUP_STATE;
+}
+
+static void TransitionSleepState(void)
+{
+	state = SLEEP_STATE;
+}
+
+static void TransitionReadState(void)
+{
+	state = READ_STATE;
+}
+
+static void TransitionDisplayState(uint16_t temperature, uint16_t testVcc)
+{
+	Display_temperature = temperature;
+	Display_testVcc = testVcc;
+	state = DISPLAY_STATE;
+}
+
+static void TransitionBatLoState(uint16_t Vcc_mv)
+{
+	BatLo_Vcc_mv = Vcc_mv;
+	state = BAT_LO_STATE;
+}
+
+static void TransitionErrorState(uint8_t err_num)
+{
+	Error_num = err_num;
+	state = ERROR_STATE;
+}
+
+// This is called when power turns on (batteries inserted).
+static void StartupState(void)
 {
 	// Initialize port B.
 	// Bit 0 is the button input, high = button pressed.
@@ -690,141 +732,246 @@ int main(void)
 	DecimalOn(1000);  // Turn on 20mA load for 1 second.
 	uint16_t batv = ADC2mv(GetBatADC());
 	BlankDisplay();  // Turn off load.
-	if (batv < 2940) {  // Display warning if Vcc is 2% low.
-		DisplayBatLo(batv);
+	if (batv < 2940) {  // Display low battery warning if Vcc is 2% low.
+		TransitionBatLoState(batv);
+		return;
+	}
+	TransitionSleepState();
+}
+
+static void SleepState(void)
+{
+	// Sleep while waiting for button push.
+	BlankDisplay();
+	// MLXPowerDown();  // DO NOT do this here, because Vcc may be too low to properly shut down sensor.
+	ADCPowerDown();
+	PCIFR = (1<<PCIF0); // Clear Pin Change Interrupt Flag 0.
+	while (ButtonIsPushed() == 0) {
+		// Power down as much stuff as we can while sleeping.
+		PRR = (1<<PRTWI)  // Turn off power to Two Wire Interface
+		| (1<<PRTIM2)     // Counter/timer 2
+		| (1<<PRTIM0)     // Counter/timer 0
+		| (1<<PRTIM1)     // Counter/timer 1
+#if defined(NDEBUG) // Disable iff not using debugWire.
+		| (1<<PRSPI)      // SPI interface - this must stay powered up if using debugWire for programming or debugging.
+#endif
+		| (1<<PRUSART0)   // USART 0
+		| (1<<PRADC);     // ADC
+
+		// Set up to wake up on button push. Button is connected to PCINT0 pin which can trigger PCI0 interrupt.
+		PCMSK0 = (1<<PCINT0); // Enable interrupts from PCINT0 pin change.
+		PCICR = (1<<PCIE0);   // Pin Change Interrupt Enable 0 - enable PCI0 interrupt.
+		sei();                // Global interrupt enable. REQUIRED in order for wakeup to occur.
+		sleep_mode();         // Go to sleep (power down mode). Wake up on pin change PCINT0.
+		// Typical (at 25 deg C) current draw from battery during sleep should be:
+		// .15uA    (Optional) LM66100 ideal diode.
+		// 1.7uA    MCP1700 Voltage regulator with battery at 4.5V.
+		// 0.1uA    ATmega328P in power down mode, all peripherals disabled and WDT disabled.
+		// 2.5uA    MLX90614Bxx, Dxx sensor.
+	}
+	cli();                    // Stop responding to interrupts.
+}
+
+
+static void ReadState()
+{
+#ifdef DEBUG
+	uint16_t adc00 = GetBatADC();  // Get initial ADC reading. adc00 = 1024*Vref/Vcc.
+#endif
+	DecimalOn(100);               // Turn on a decimal point to create a 20mA load for checking battery level.
+	uint16_t adc0 = GetBatADC();  // Get initial ADC reading. adc0 = 1024*Vref/Vcc.
+	BlankDisplay();				  // Turn off the load.
+		
+	// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
+	// sensor, don't give a bad reading, DON'T EVEN WAKE UP SENSOR! Just flash "bAt" "LO" then go back to sleep.
+	if (adc0 > ADC_LOBAT_QUIT) {
+		TransitionBatLoState(ADC2mv(adc0));
+		return;
 	}
 
-	// Main loop. Sleep and wait for button push, take reading, display for a few seconds or until button is released.
-	while(1) {
+	// Wake up the sensor.
+	MLXWakeUp();  // Takes about 40ms holding SDA low. Battery can recover from the 20mA load during this time.
 		
-		// Sleep while waiting for button push.
-		BlankDisplay();
-		// MLXPowerDown();  // DO NOT do this here, because Vcc may be too low to properly shut down sensor.
-		ADCPowerDown();
-		PCIFR = (1<<PCIF0); // Clear Pin Change Interrupt Flag 0.
-		while (ButtonIsPushed() == 0) {
-			// Power down as much stuff as we can while sleeping.
-			PRR = (1<<PRTWI)  // Turn off power to Two Wire Interface
-			| (1<<PRTIM2)     // Counter/timer 2
-			| (1<<PRTIM0)     // Counter/timer 0
-			| (1<<PRTIM1)     // Counter/timer 1
-#if defined(NDEBUG) // Disable iff not using debugWire.
-			| (1<<PRSPI)      // SPI interface - this must stay powered up if using debugWire for programming or debugging.
-#endif
-			| (1<<PRUSART0)   // USART 0
-			| (1<<PRADC);     // ADC
+	// Read the Vcc voltage again, this time without the added 20mA load. Main purpose is to get the voltage as the sensor begins its operations (calibration
+	// and then continuously reading temperatures). Note that GetBatADC still turns on shunt regulator (about 2mA) and waits about 1ms
+	// before reading Vcc voltage.
+	uint16_t adc1 = GetBatADC();  // Get initial ADC reading. adc1 = 1024*Vref/Vcc.
 
-			// Set up to wake up on button push. Button is connected to PCINT0 pin which can trigger PCI0 interrupt.
-			PCMSK0 = (1<<PCINT0); // Enable interrupts from PCINT0 pin change.
-			PCICR = (1<<PCIE0);   // Pin Change Interrupt Enable 0 - enable PCI0 interrupt.
-			sei();                // Global interrupt enable. REQUIRED in order for wakeup to occur.
-			sleep_mode();         // Go to sleep (power down mode). Wake up on pin change PCINT0.
-			// Typical (at 25 deg C) current draw from battery during sleep should be:
-			// .15uA    (Optional) LM66100 ideal diode.
-			// 1.7uA    MCP1700 Voltage regulator with battery at 4.5V.
-			// 0.1uA    ATmega328P in power down mode, all peripherals disabled and WDT disabled.
-			// 2.5uA    MLX90614Bxx, Dxx sensor.
-		}
-		cli();                    // Stop responding to interrupts.
+	// It's unlikely the battery check would fail here, but might as well check anyway...
+	// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
+	// sensor, don't give a bad reading. Just try to power down sensor, flash "bAt" "LO" and go back to sleep.
+	if (adc1 > ADC_LOBAT_QUIT) {
+		TransitionBatLoState(ADC2mv(adc1));
+		return;
+	}
 
-		// The button has been pushed! Let's get busy!
-#ifdef DEBUG
-		uint16_t adc00 = GetBatADC();  // Get initial ADC reading. adc00 = 1024*Vref/Vcc.
-#endif
-		DecimalOn(100);               // Turn on a decimal point to create a 20mA load for checking battery level.
-		uint16_t adc0 = GetBatADC();  // Get initial ADC reading. adc0 = 1024*Vref/Vcc.
-		BlankDisplay();				  // Turn off the load.
+	// Wait for sensor to acquire a stable temperature reading.
 		
-		// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
-		// sensor, don't give a bad reading, DON'T EVEN WAKE UP SENSOR! Just flash "bAt" "LO" and go back to sleep.
-		if (adc0 > ADC_LOBAT_QUIT) {
-			DisplayBatLo(ADC2mv(adc0));
-			continue;
-		}
+	// According to MLX data sheet, "After wake up the first data is available after 0.25 seconds (typ)."
+	// It's not clear how that relates to the IIR filter "settling times" shown below:
+	// MLX90614BAA sensor has settling time of .10 seconds with factory settings.
+	// MLX90614DCH sensor has settling time of .65 seconds with factory settings.
+	// Let's wait at least .25 seconds. Multiply that by 1.11 to allow for 10% fast MCU clock. So 278ms.
+	
+	// Actual tests showed that readings were stable at ~100ms!
+	
+	_delay_ms(278);
 
-		// Wake up the sensor.
-		MLXWakeUp();  // Takes about 40ms.
+	// Read the sensor!
+	uint16_t raw_temp_value;
+	if (ReadSensor(RAMADDR_TOBJ1, &raw_temp_value)) {
+		// Most likely cause of this error is missing or broken MLX sensor.
+		// Might also be due to low Vcc.
+		_delay_ms(1000); // In case of low battery, give a bit of time for battery to recover.
+		MLXPowerDown();  // Since sensor (should be) powered up now, try to put sensor to sleep.
+		TransitionErrorState(1);
+		return;
+	}
+
+	// Check the Vcc voltage again.
+	uint16_t adc2 = GetBatADC();
+
+	// It's unlikely the battery check would fail here, but might as well check anyway...
+	// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
+	// sensor, don't give a bad reading. Just try to power down sensor, flash "bAt" "LO" and go back to sleep.
+	if (adc2 > ADC_LOBAT_QUIT) {
+		TransitionBatLoState(ADC2mv(adc2));
+		return;
+	}
+
+	// Power down the sensor now, BEFORE we start displaying stuff.
+	// (Display can drag down battery to the point that we can't shut down the sensor properly!)
+	MLXPowerDown();
+
+	adc1 = ADC2mv(adc1); // Convert ADC readings to millivolts.
+	adc2 = ADC2mv(adc2);
+	uint16_t avgVcc = (adc1 + adc2 + 1) / 2;
+
+	// Prepare to display the temperature reading.
+	int16_t temperature = Convert(raw_temp_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, avgVcc);
 		
-		// Read the Vcc voltage again, this time without the added 20mA load. Main purpose is to get the voltage as the sensor begins it's operations (calibration
-		// and then continuously reading temperatures). Note that GetBatADC still turns on shunt regulator (about 2mA) and waits about 1ms
-		// before reading Vcc voltage.
-		uint16_t adc1 = GetBatADC();  // Get initial ADC reading. adc1 = 1024*Vref/Vcc.
+	TransitionDisplayState(temperature, adc2);
+}
 
-		// It's unlikely the battery check would fail here, but might as well check anyway...
-		// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
-		// sensor, don't give a bad reading. Just try to power down sensor, flash "bAt" "LO" and go back to sleep.
-		if (adc1 > ADC_LOBAT_QUIT) {
-			LoBatShutdown(adc1);
-			continue;
+// Display temperature for HOLD_TIME_MS milliseconds.
+// Continue to display if the button is held down continuously.
+// Exit early if user releases and re-presses button (indicating they want a new reading).
+static void DisplayState(uint16_t temperature, uint16_t testVcc)
+{
+	// Binary to decimal convert and send to display buffer.
+	DecimalDisplayPrep(temperature, MAX_DEG, MIN_DEG, DECIMALS+1, 1<<DECIMALS);
+	
+	// Illuminate display.
+	if (DisplayNms(HOLD_TIME_MS)) {
+		// We are here because user released and then pressed button again which we interpret to mean
+		// they want a new reading.
+		TransitionReadState();
+		return;
+	}
+	// If NewButtonState is 1, user has been holding the button down all this time. Continue displaying the temperature.
+	while (NewButtonState) {
+		DisplayNms(100);
+	}
+
+	if (testVcc <= ADC_LOBAT_WARN_V) {
+		TransitionBatLoState(testVcc);
+		return;
+	}
+
+	TransitionSleepState();
+}
+
+static void BatLoState(uint16_t Vcc_mv)
+{
+	DisplayBatLo(Vcc_mv);
+	TransitionSleepState();
+}
+
+static void ErrorState(uint8_t err_num)
+{
+	error(err_num);
+	TransitionSleepState();
+}
+
+/////////////////////////////// Thermometer main()
+
+#ifdef NDEBUG  // Normal release code.
+
+int main(void)
+{
+	TransitionStartupState();  // Start the state machine in the STARTUP_STATE.
+	
+	// The main loop is implemented as a state machine. Each xState function returns the state to goto next.
+	while (true) {
+		switch (state) {
+			
+			case STARTUP_STATE:
+				StartupState();
+				break;
+			
+			case SLEEP_STATE:
+				SleepState();
+				break;
+				
+			case READ_STATE:
+				ReadState();
+				break;
+				
+			case DISPLAY_STATE:
+				DisplayState(Display_temperature, Display_testVcc);
+				break;
+			
+			case BAT_LO_STATE:
+				BatLoState(BatLo_Vcc_mv);
+				break;
+			
+			case ERROR_STATE:
+				ErrorState(Error_num);
+				break;
+
 		}
+	}
+}
 
-#ifndef DEBUG
+#else //////////////////////////// Remainder of this file is DEBUG code.
 
-		////////////////////////////// Beginning of normal Release (non-debug) code. Read and display temperature.
-		
-		// According to MLX data sheet, "After wake up the first data is available after 0.25 seconds (typ)."
-		// It's not clear how that relates to the IIR filter "settling times" shown below:
-		// MLX90614BAA sensor has settling time of .10 seconds with factory settings.
-		// MLX90614DCH sensor has settling time of .65 seconds with factory settings.
-		// Let's wait at least .25 seconds. Multiply that by 1.11 to allow for 10% fast MCU clock. So 278ms
-		_delay_ms(278);
+int main(void)
+{
+	TransitionStartupState();  // Start the state machine in the STARTUP_STATE.
+	
+	// The main loop is implemented as a state machine. Each xState function returns the state to goto next.
+	while (true) {
+		switch (state) {
+			
+			case STARTUP_STATE:
+				StartupState();
+				break;
+			
+			case SLEEP_STATE:
+				SleepState();
+				break;
+				
+			case READ_STATE:
+				ReadState();
+				break;
+				
+			case DISPLAY_STATE:
+				state = DisplayState();
+				break;
+			
+			case LO_BAT_STATE:
+				state = LoBatState();
+				break;
+			
+			case ERROR_STATE:
+				state = ErrorState();
+				break;
 
-		// Read the sensor!
-		uint16_t raw_temp_value;
-		if (ReadSensor(RAMADDR_TOBJ1, &raw_temp_value)) {
-			// Most likely cause of this error is missing or broken MLX sensor.
-			// Might also be due to low Vcc.
-			_delay_ms(1000); // In case of low battery, give a bit of time for battery to recover.
-			MLXPowerDown();  // Since sensor (should be) powered up now, try to put sensor to sleep.
-			error(1);
-			continue;
 		}
+	}
+}
 
-		// Check the Vcc voltage again.
-		uint16_t adc2 = GetBatADC();
-
-		// It's unlikely the battery check would fail here, but might as well check anyway...
-		// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
-		// sensor, don't give a bad reading. Just try to power down sensor, flash "bAt" "LO" and go back to sleep.
-		if (adc2 > ADC_LOBAT_QUIT) {
-			LoBatShutdown(adc2);
-			continue;
-		}
-
-		// Power down the sensor now, BEFORE we start displaying stuff.
-		// (Display can drag down battery to the point that we can't shut down the sensor properly!)
-		MLXPowerDown();
-
-		adc1 = ADC2mv(adc1); // Convert ADC readings to millivolts.
-		adc2 = ADC2mv(adc2);
-		uint16_t avgVcc = (adc1 + adc2 + 1) / 2;
-
-		// Prepare to display the temperature reading.
-		Convert(raw_temp_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, avgVcc);
-
-		// Illuminate display for HOLD_TIME_MS milliseconds.
-		if (DisplayNms(HOLD_TIME_MS)) {
-			// We are here because user released and then pressed button again which we interpret to mean
-			// they want a new reading.
-			continue; // Go back around the main loop.
-		}
-		// If NewButtonState is 1, user has been holding the button down all this time. Continue displaying the temperature.
-		while (NewButtonState) {
-			DisplayNms(100);
-		}
-
-		if (avgVcc <= ADC_LOBAT_WARN_V) {
-			DisplayBatLo(avgVcc);
-			continue;
-		}
-
-		continue; // This is the end of the main while loop for non-debug code.
-
-#else
-
-		/////////////////////////////// Beginning of DEBUG code.
-
- #if 1   // Beginning of "new" debug code. Read sensors and store in array. Use debugger to examine the values.
+#if 1   // Beginning of "new" debug code. Read sensors and store in array. Use debugger to examine the values.
  
 #define N_READINGS 10
 		volatile uint16_t DebugData[N_READINGS*4 + 4];
@@ -941,6 +1088,3 @@ int main(void)
 
  #endif  // End of old debug code.
 #endif  // End of debug code.
-
-	}  // End of main while loop.
-} // End of main() function.
