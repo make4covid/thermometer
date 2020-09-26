@@ -33,6 +33,7 @@ void i2c_init(void)
 	TWBR = (uint8_t)TWBR_val;
 }
 
+// Returns 0 if OK.
 uint8_t i2c_start(uint8_t address)
 {
 	// reset TWI control register
@@ -62,6 +63,7 @@ uint8_t i2c_start(uint8_t address)
 	return 0;
 }
 
+// Returns 0 if OK.
 uint8_t i2c_write(uint8_t data)
 {
 	// load data into data register
@@ -98,6 +100,7 @@ uint8_t i2c_read_nack(void)
 	return TWDR;
 }
 
+// Return 0 if OK.
 uint8_t i2c_transmit(uint8_t address, uint8_t* data, uint16_t length)
 {
 	if (i2c_start(address | I2C_WRITE)) return 1;
@@ -112,6 +115,7 @@ uint8_t i2c_transmit(uint8_t address, uint8_t* data, uint16_t length)
 	return 0;
 }
 
+// Return 0 if OK.
 uint8_t i2c_receive(uint8_t address, uint8_t* data, uint16_t length)
 {
 	if (i2c_start(address | I2C_READ)) return 1;
@@ -127,6 +131,7 @@ uint8_t i2c_receive(uint8_t address, uint8_t* data, uint16_t length)
 	return 0;
 }
 
+// Return 0 if OK.
 uint8_t i2c_writeReg(uint8_t devaddr, uint8_t regaddr, uint8_t* data, uint16_t length)
 {
 	if (i2c_start(devaddr | 0x00)) return 1;
@@ -143,6 +148,7 @@ uint8_t i2c_writeReg(uint8_t devaddr, uint8_t regaddr, uint8_t* data, uint16_t l
 	return 0;
 }
 
+// Return 0 if OK.
 uint8_t i2c_readReg(uint8_t devaddr, uint8_t regaddr, uint8_t* data, uint16_t length)
 {
 	if (i2c_start(devaddr)) return 1;

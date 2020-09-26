@@ -26,7 +26,7 @@
     <OverrideVtorValue>exception_table</OverrideVtorValue>
     <BootSegment>2</BootSegment>
     <ResetRule>0</ResetRule>
-    <eraseonlaunchrule>1</eraseonlaunchrule>
+    <eraseonlaunchrule>0</eraseonlaunchrule>
     <EraseKey />
     <AsfFrameworkConfig>
       <framework-data xmlns="">
@@ -40,22 +40,33 @@
         </dependencies>
       </framework-data>
     </AsfFrameworkConfig>
-    <avrtool>com.atmel.avrdbg.tool.snap</avrtool>
-    <avrtoolserialnumber>BUR184672974</avrtoolserialnumber>
+    <avrtool>com.atmel.avrdbg.tool.pickit4</avrtool>
+    <avrtoolserialnumber>BUR202274459</avrtoolserialnumber>
     <avrdeviceexpectedsignature>0x1E9514</avrdeviceexpectedsignature>
     <com_atmel_avrdbg_tool_snap>
       <ToolOptions>
         <InterfaceProperties>
-          <IspClock>125000</IspClock>
+          <IspClock>0</IspClock>
         </InterfaceProperties>
-        <InterfaceName>debugWIRE</InterfaceName>
+        <InterfaceName>ISP</InterfaceName>
       </ToolOptions>
       <ToolType>com.atmel.avrdbg.tool.snap</ToolType>
       <ToolNumber>BUR184672974</ToolNumber>
       <ToolName>MPLAB® Snap</ToolName>
     </com_atmel_avrdbg_tool_snap>
-    <avrtoolinterface>debugWIRE</avrtoolinterface>
+    <avrtoolinterface>ISP</avrtoolinterface>
     <avrtoolinterfaceclock>125000</avrtoolinterfaceclock>
+    <com_atmel_avrdbg_tool_pickit4>
+      <ToolOptions>
+        <InterfaceProperties>
+          <IspClock>125000</IspClock>
+        </InterfaceProperties>
+        <InterfaceName>ISP</InterfaceName>
+      </ToolOptions>
+      <ToolType>com.atmel.avrdbg.tool.pickit4</ToolType>
+      <ToolNumber>BUR202274459</ToolNumber>
+      <ToolName>MPLAB® PICkit 4</ToolName>
+    </com_atmel_avrdbg_tool_pickit4>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
     <ToolchainSettings>
@@ -79,6 +90,7 @@
             <Value>%24(PackRepoDir)\Atmel\ATmega_DFP\1.4.351\include</Value>
           </ListValues>
         </avrgcc.compiler.directories.IncludePaths>
+        <avrgcc.compiler.optimization.level>Optimize for size (-Os)</avrgcc.compiler.optimization.level>
         <avrgcc.compiler.optimization.PackStructureMembers>True</avrgcc.compiler.optimization.PackStructureMembers>
         <avrgcc.compiler.optimization.AllocateBytesNeededForEnum>True</avrgcc.compiler.optimization.AllocateBytesNeededForEnum>
         <avrgcc.compiler.warnings.AllWarnings>True</avrgcc.compiler.warnings.AllWarnings>
@@ -92,7 +104,6 @@
             <Value>%24(PackRepoDir)\Atmel\ATmega_DFP\1.4.351\include</Value>
           </ListValues>
         </avrgcc.assembler.general.IncludePaths>
-        <avrgcc.compiler.optimization.level>Optimize for size (-Os)</avrgcc.compiler.optimization.level>
       </AvrGcc>
     </ToolchainSettings>
   </PropertyGroup>
@@ -118,6 +129,48 @@
             <Value>%24(PackRepoDir)\Atmel\ATmega_DFP\1.4.351\include</Value>
           </ListValues>
         </avrgcc.compiler.directories.IncludePaths>
+        <avrgcc.compiler.optimization.level>Optimize for size (-Os)</avrgcc.compiler.optimization.level>
+        <avrgcc.compiler.optimization.PackStructureMembers>True</avrgcc.compiler.optimization.PackStructureMembers>
+        <avrgcc.compiler.optimization.AllocateBytesNeededForEnum>True</avrgcc.compiler.optimization.AllocateBytesNeededForEnum>
+        <avrgcc.compiler.optimization.DebugLevel>Default (-g2)</avrgcc.compiler.optimization.DebugLevel>
+        <avrgcc.compiler.warnings.AllWarnings>True</avrgcc.compiler.warnings.AllWarnings>
+        <avrgcc.linker.libraries.Libraries>
+          <ListValues>
+            <Value>libm</Value>
+          </ListValues>
+        </avrgcc.linker.libraries.Libraries>
+        <avrgcc.assembler.general.IncludePaths>
+          <ListValues>
+            <Value>%24(PackRepoDir)\Atmel\ATmega_DFP\1.4.351\include</Value>
+          </ListValues>
+        </avrgcc.assembler.general.IncludePaths>
+        <avrgcc.assembler.debugging.DebugLevel>Default (-Wa,-g)</avrgcc.assembler.debugging.DebugLevel>
+      </AvrGcc>
+    </ToolchainSettings>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Validate' ">
+    <ToolchainSettings>
+      <AvrGcc>
+        <avrgcc.common.Device>-mmcu=atmega328 -B "%24(PackRepoDir)\Atmel\ATmega_DFP\1.4.351\gcc\dev\atmega328"</avrgcc.common.Device>
+        <avrgcc.common.outputfiles.hex>True</avrgcc.common.outputfiles.hex>
+        <avrgcc.common.outputfiles.lss>True</avrgcc.common.outputfiles.lss>
+        <avrgcc.common.outputfiles.eep>True</avrgcc.common.outputfiles.eep>
+        <avrgcc.common.outputfiles.srec>True</avrgcc.common.outputfiles.srec>
+        <avrgcc.common.outputfiles.usersignatures>False</avrgcc.common.outputfiles.usersignatures>
+        <avrgcc.compiler.general.ChangeDefaultCharTypeUnsigned>True</avrgcc.compiler.general.ChangeDefaultCharTypeUnsigned>
+        <avrgcc.compiler.general.ChangeDefaultBitFieldUnsigned>True</avrgcc.compiler.general.ChangeDefaultBitFieldUnsigned>
+        <avrgcc.compiler.symbols.DefSymbols>
+          <ListValues>
+            <Value>F_CPU=1000000UL</Value>
+            <Value>VALIDATE</Value>
+          </ListValues>
+        </avrgcc.compiler.symbols.DefSymbols>
+        <avrgcc.compiler.directories.IncludePaths>
+          <ListValues>
+            <Value>%24(PackRepoDir)\Atmel\ATmega_DFP\1.4.351\include</Value>
+          </ListValues>
+        </avrgcc.compiler.directories.IncludePaths>
+        <avrgcc.compiler.optimization.level>Optimize for size (-Os)</avrgcc.compiler.optimization.level>
         <avrgcc.compiler.optimization.PackStructureMembers>True</avrgcc.compiler.optimization.PackStructureMembers>
         <avrgcc.compiler.optimization.AllocateBytesNeededForEnum>True</avrgcc.compiler.optimization.AllocateBytesNeededForEnum>
         <avrgcc.compiler.warnings.AllWarnings>True</avrgcc.compiler.warnings.AllWarnings>
@@ -131,11 +184,9 @@
             <Value>%24(PackRepoDir)\Atmel\ATmega_DFP\1.4.351\include</Value>
           </ListValues>
         </avrgcc.assembler.general.IncludePaths>
-        <avrgcc.compiler.optimization.level>Optimize (-O1)</avrgcc.compiler.optimization.level>
-        <avrgcc.compiler.optimization.DebugLevel>Default (-g2)</avrgcc.compiler.optimization.DebugLevel>
-        <avrgcc.assembler.debugging.DebugLevel>Default (-Wa,-g)</avrgcc.assembler.debugging.DebugLevel>
       </AvrGcc>
     </ToolchainSettings>
+    <OutputPath>bin\Validate\</OutputPath>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="src\i2c_master.c">
