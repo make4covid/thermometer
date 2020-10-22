@@ -35,7 +35,7 @@
 	#define DECIMALS TENTHS      // In Release, display temperature as [1]xx.x in deg F or C, depending on SCALE
 	#define MAX_DEG 1099         // Above 109.9 deg F is displayed as "HI"
 	#define MIN_DEG 600          // Below 60.0 deg F is displayed as "LO"
-	#define HOLD_TIME_MS 5000    // How long (ms) to display temperature reading if button is not held down.
+	//#define HOLD_TIME_MS 5000    // How long (ms) to display temperature reading if button is not held down.
 #endif
 
 #ifdef VALIDATE
@@ -46,42 +46,57 @@
 	#define DECIMALS HUNDREDTHS // Display temperature as xx.xx
 	#define MAX_DEG 19999       // Above 199.99 deg C is displayed as "HI"
 	#define MIN_DEG -999        // Below -9.99 deg C is displayed as "LO"
-	#define HOLD_TIME_MS 5000   // How long (ms) to display temperature reading if button is not held down.
+	//#define HOLD_TIME_MS 5000   // How long (ms) to display temperature reading if button is not held down.
 #endif
 
 #ifdef DEBUG
 	// Set parameters for DEBUG firmware.
 	#define SCALE DEG_C          // Always use DEG_C while debugging.
 	#define DECIMALS HUNDREDTHS  // In DEBUG, display temperature as xx.xx (deg C)
-	#define MAX_DEG 4999         // Above 49.99 deg C is displayed as "HI"
+	#define MAX_DEG 10999         // Above 109.99 deg C is displayed as "HI"
 	#define MIN_DEG -999         // Below -9.99 deg C is displayed as "LO"
 	//#define HOLD_TIME_MS 5000  // How long (ms) to display temperature reading if button is not held down.
-	//#define NO_ADC             // Optionally define this to debug ADC current draw issues.
 	//#define NO_SENSOR          // Optionally define this to debug MLX sensor current draw or other issues.
-	#define NO_DISPLAY           // Define this to disable display to get more stable battery and Vcc voltages.
+	//#define NO_DISPLAY           // Define this to disable display to get more stable battery and Vcc voltages.
+	//#define NO_ADC             // Optionally define this to debug ADC current draw issues.
+	//#define OLD_DISPLAY          // Define this to make this FW work with PCB v1 where port C bit 0 controlled the rightmost digit cathode driver. Might also want to define NO_ADC when using old PCB.
 	#define ALLOW_LOW_VDD        // Define this to allow displaying temperature readings when Vdd is less than sensor's minimum operating Vdd.
 
-	#define AUTORUN            // Automatically wake up after sleeping. Don't wait for button.
+	//#define AUTORUN            // Automatically wake up after sleeping. Don't wait for button.
 		//#define DISP988      // Define this to force temperature display to 98.8 to give consistent load for investigating expected battery life.
 		//#define SLEEP_TIME_MS (20000 - 5318)  // Sleep time when autorunning. Want 5 seconds of display time and 15 seconds of low power per cycle.
 
-	#define DATALOG           // Define this to output various info through serial (port B bit 7, MCU pin 10)
+	//#define DATALOG           // Define this to output various info through serial (port B bit 7, MCU pin 10)
 		#define SLEEP_TIME_MS 1000  // Sleep time when autorunning. Want 5 seconds of display time and 15 seconds of low power per cycle.
-		#define HOLD_TIME_MS 1000   // How long (ms) to display temperature reading if button is not held down.
+		//#define HOLD_TIME_MS 4000   // How long (ms) to display temperature reading if button is not held down.
 
-	#define DISPLAY_TA        // Define this to display ambient temperature briefly before object temperature.
+	//#define DISPLAY_TA        // Define this to display ambient temperature briefly before object temperature.
 	#define DISP_BATLOW_VOLTS // Define this to have Vcc voltage displayed if low battery is detected.
 	//#define DEBUG_READSTATE   // Define this to take multiple readings in a row, for investigating noise, drift, etc. of temperature sensor.
+	#define IR_TO_ORAL_OFFSET 0   // Override the "standard" IR_TO_ORAL_OFFSET setting below.
 #endif
 
+#define CONTINUOUS_READ         // If defined, continuously read temperature and display it (otherwise, 1 button press -> 1 reading)
+	#define READ_PERIOD_MS 125      // Time from one read event to the next. Applies to continuous read mode.
+	#define READ_TIME_MS 3000       // How long to read and find max temp in continuous read mode.
+	#define READ_BLINK_MS 100       // Display off time before holding display.
+#ifndef HOLD_TIME_MS
+  #ifdef CONTINUOUS_READ
+    #define HOLD_TIME_MS 3000
+  #else
+    #define HOLD_TIME_MS 5000
+  #endif
+#endif
 #define CHOOSE_EMISSIVITY       // If defined, lets user choose emissivity value at battery insertion time.
-#define IR_TO_ORAL_OFFSET 200   // Add this amount (hundredths of a degree C) to the forehead skin temperature to get the equivalent oral temperature.
+#ifndef IR_TO_ORAL_OFFSET
+  #define IR_TO_ORAL_OFFSET 200   // Add this amount (hundredths of a degree C) to the forehead skin temperature to get the equivalent oral temperature.
                                 // Choose 2.00C offset for now because it's a round number and because it's in the ballpark of what I think the offset is for me with room temperature ~27C.
 								// I think the offset depends on the ambient temperature. For ambient temperature below 27C, the offset may be greater.
+#endif
 #define EMISSIVITY_X1000 980    // Desired emissivity setting * 1000. So .95 or 95% would be entered here as 950.
 #define INITIAL_LOAD_MS	20      // Time in ms to leave 20mA load on.
 #define LOAD_RECOVERY_MS 80     // Time allowed for batteries to recover (shouldn't matter except possibly with low batteries.
-#define READING_WAIT_MS 730     // was 278 Time allowed after sensor wakeup for sensor to get reading.
+#define READING_WAIT_MS 278     // was 278/730 Time allowed after sensor wakeup for sensor to get reading.
 
 #define TENTHS 1
 #define HUNDREDTHS 2
@@ -135,7 +150,11 @@ static void WaitButtonRelease(void)
 #define DISP_N_DIGITS 4
 
 // Bits in PORTC that control digit drivers.
+#ifdef OLD_DISPLAY
+#define DIGIT_DRIVER_MASK 0xF
+#else
 #define DIGIT_DRIVER_MASK 0xE
+#endif
 
 // LS Digit is controlled by this bit in PORTB.
 #define LS_DIGIT_BIT 6
@@ -265,17 +284,24 @@ static void DecimalDisplayPrep(int16_t num, int16_t max_num, int16_t min_num, in
 static inline void TurnOffDigits(void)
 {
 	PORTC &= ~DIGIT_DRIVER_MASK;
-	PORTB &= ~(1<<LS_DIGIT_BIT);	
+#ifdef OLD_DISPLAY
+#else
+	PORTB &= ~(1<<LS_DIGIT_BIT);
+#endif
 }
 
 // Turn on the given digit driver..
 static inline void TurnOnDigit(uint8_t digit)
 {
+#ifdef OLD_DISPLAY
+	PORTC |= 1<<digit;
+#else	
 	if (digit > 0) {
 		PORTC |= 1<<digit;		
 	} else {
 		PORTB |= 1<<LS_DIGIT_BIT;
 	}
+#endif
 }
 
 // Turn off the current digit and illuminate the next digit.
@@ -590,7 +616,7 @@ static void MLXPowerDown(void)
 	// It's not clear from sensor datasheet what should happen to SDA during sleep. Experiments show leaving SDA pulled-up high
 	// results in lowest sleep current, about 2.2uA for the sensor.
 	PORTC = 0 | (0<<SCL_BIT) | (1<<SDA_BIT);  // Set digit drivers all OFF. Set SCL to 0. Set SDA to 1.
-	DDRC = DIGIT_DRIVER_MASK | (1<<SCL_BIT);  // Set bits 1-3 and SCL to outputs.
+	DDRC = DIGIT_DRIVER_MASK | (1<<SCL_BIT);  // Set digit driver pins and SCL to outputs.
 }
 
 // Wake up the MLX sensor after being powered down.
@@ -1029,8 +1055,13 @@ static void StartupState(void)
 	// whether the button pulls the signal to ground or to Vcc.
 	// All others are configured as inputs with pullups. The pullups prevent the pins from
 	// floating to an intermediate voltage which can cause higher current usage.
-	PORTB = ~(1<<LS_DIGIT_BIT) & ~(1<<VREFPWR_BIT) & ~BUTTON_PUSHED_VALUE & ~(1<<SERIAL_OUT_BIT);
+#ifdef OLD_DISPLAY
+	PORTB = ~(1<<VREFPWR_BIT) & ~BUTTON_PUSHED_VALUE & ~(1<<SERIAL_OUT_BIT);
+	DDRB = (1<<VREFPWR_BIT) | (1<<SERIAL_OUT_BIT);
+#else
+	PORTB = (uint8_t)(~(1U<<LS_DIGIT_BIT) & ~(1<<VREFPWR_BIT) & ~BUTTON_PUSHED_VALUE & ~(1<<SERIAL_OUT_BIT));
 	DDRB = (1<<LS_DIGIT_BIT) | (1<<VREFPWR_BIT) | (1<<SERIAL_OUT_BIT);
+#endif
 
 	// Initialize GPIO port D - LED segment drivers. Output high = segment ON.
 	PORTD = 0;   // Set segments all OFF.
@@ -1243,6 +1274,19 @@ static void ReadState()
 		TransitionBatLoState(ADC2mv(adc1));
 		return;
 	}
+	uint16_t V1 = ADC2mv(adc1); // Convert ADC reading to millivolts.
+		
+#ifdef DATALOG
+	// Send voltages to serial output.
+	PutStr("adc00,");
+	DecimalFormat(adc00, 4, 0);
+	PutStr(",V00,");
+	DecimalFormat(ADC2mv(adc00), 4, 3);
+	PutStr(",V0,");
+	DecimalFormat(ADC2mv(adc0), 4, 3);
+	PutStr(",V1,");
+	DecimalFormat(V1, 4, 3);
+#endif
 
 	// Wait for sensor to acquire a stable temperature reading.
 		
@@ -1257,82 +1301,110 @@ static void ReadState()
 	
 	_delay_ms(READING_WAIT_MS);
 
-	// Read the sensor!
-	uint16_t raw_temp_value;
-	if (ReadSensorT(RAMADDR_TOBJ1, &raw_temp_value)) {
-		// Most likely cause of this error is missing or broken MLX sensor.
-		// Might also be due to low Vcc.
-		_delay_ms(1000); // In case of low battery, give a bit of time for battery to recover.
-		MLXPowerDown();  // Since sensor (should be) powered up now, try to put sensor to sleep.
-		// T1.2 Transition to ErrorState.
-		TransitionErrorState(1);
-		return;
-	}
+	int16_t final_To = -32767;  // This will accumulate the max temp seen so far.
+	int16_t final_Ta;
+	uint16_t V2;
+	
+#ifdef CONTINUOUS_READ
+	// Repeatedly read temperature and display the max temp seen so far.
 
-	uint16_t raw_Ta_value;
-#if defined(DISPLAY_Ta) || defined(DATALOG)
-	// Read ambient temperature.
-	if (ReadSensorT(RAMADDR_TA, &raw_Ta_value)) {
-		// Most likely cause of this error is missing or broken MLX sensor.
-		// Might also be due to low Vcc.
-		MLXPowerDown();  // Since sensor (should be) powered up now, try to put sensor to sleep.
-		// T1.2 Transition to ErrorState.
-		TransitionErrorState(1);
-		return;
-	}
+	#define MIN_READS (READ_TIME_MS / READ_PERIOD_MS) // Min number of times to read and display.
+
+	for (uint8_t read_ct = 0; read_ct < MIN_READS; read_ct++) {
 #endif
+		// Read the sensor!
+		uint16_t raw_temp_value;
+		if (ReadSensorT(RAMADDR_TOBJ1, &raw_temp_value)) {
+			// Most likely cause of this error is missing or broken MLX sensor.
+			// Might also be due to low Vcc.
+			_delay_ms(1000); // In case of low battery, give a bit of time for battery to recover.
+			MLXPowerDown();  // Since sensor (should be) powered up now, try to put sensor to sleep.
+			// T1.2 Transition to ErrorState.
+			TransitionErrorState(1);
+			return;
+		}
 
-	// Check the Vcc voltage again.
-	uint16_t adc2 = GetBatADC();
+		uint16_t raw_Ta_value;
+	#if defined(DISPLAY_Ta) || defined(DATALOG)
+		// Read ambient temperature.
+		if (ReadSensorT(RAMADDR_TA, &raw_Ta_value)) {
+			// Most likely cause of this error is missing or broken MLX sensor.
+			// Might also be due to low Vcc.
+			MLXPowerDown();  // Since sensor (should be) powered up now, try to put sensor to sleep.
+			// T1.2 Transition to ErrorState.
+			TransitionErrorState(1);
+			return;
+		}
+	#endif
 
-	// It's unlikely the battery check would fail here, but might as well check anyway...
-	// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
-	// sensor, don't give a bad reading. Just try to power down sensor, flash "bAt" "LO" and go back to sleep.
-	if (adc2 > ADC_LOBAT_QUIT) {
-		// T1.10 Transition to BatLoState.
-		TransitionBatLoState(ADC2mv(adc2));
-		return;
-	}
+		// Check the Vcc voltage again.
+		uint16_t adc2 = GetBatADC();
+
+		// It's unlikely the battery check would fail here, but might as well check anyway...
+		// If there is any possibility (accounting for measurement errors) that Vcc is below minimum operating voltage of
+		// sensor, don't give a bad reading. Just try to power down sensor, flash "bAt" "LO" and go back to sleep.
+		if (adc2 > ADC_LOBAT_QUIT) {
+			MLXPowerDown();
+			// T1.10 Transition to BatLoState.
+			TransitionBatLoState(ADC2mv(adc2));
+			return;
+		}
+
+		V2 = ADC2mv(adc2); // Convert ADC reading to millivolts.
+		uint16_t avgVcc = (V1 + V2 + 1) / 2;
+		V1 = V2;
+
+	#ifdef DATALOG
+		PutStr(",V2,");
+		DecimalFormat(V2, 4, 3);
+		PutStr(",avgVcc,");
+		DecimalFormat(avgVcc, 4, 3);
+	
+		PutStr("\nrawTo,");
+		DecimalFormat(raw_temp_value, 5, 2);
+	#endif
+	
+		// Prepare to display the object temperature reading.
+		int16_t To = Convert(raw_temp_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, avgVcc, IR_TO_ORAL_OFFSET);
+		if (To > final_To) {
+			final_To = To;
+		}
+	
+		final_Ta = 0;
+	#if defined(DISPLAY_TA) || defined(DATALOG)
+	 #ifdef DATALOG
+		PutStr("\nrawTa,");
+		DecimalFormat(raw_Ta_value, 5, 2);
+	 #endif	
+		// Prepare to display the ambient temperature reading.
+		final_Ta = Convert(raw_Ta_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, avgVcc, 0);
+	#endif
+
+#ifdef CONTINUOUS_READ
+	#ifdef DISP988
+		// For battery life test, always display 98.8 for consistency.
+		DecimalDisplayPrep(988, MAX_DEG, MIN_DEG, DECIMALS+1, 1<<DECIMALS);
+	#else
+		// Binary to decimal convert and send to display buffer.
+		DecimalDisplayPrep(final_To, MAX_DEG, MIN_DEG, DECIMALS+1, 1<<DECIMALS);
+	#endif
+
+		// Illuminate display.
+		if (DisplayNms(READ_PERIOD_MS)) {
+			// We are here because user released and then pressed button again which we interpret to mean
+			// they want a new reading.
+			// T1.11 Transition to ReadState.
+			TransitionReadState();
+			return;
+		}
+	}	// End of for loop.
+
+	_delay_ms(READ_BLINK_MS);
+#endif
 
 	// Power down the sensor now, BEFORE we start displaying stuff.
 	// (Display can drag down battery to the point that we can't shut down the sensor properly!)
 	MLXPowerDown();
-
-	uint16_t V1 = ADC2mv(adc1); // Convert ADC readings to millivolts.
-	uint16_t V2 = ADC2mv(adc2);
-	uint16_t avgVcc = (V1 + V2 + 1) / 2;
-
-#ifdef DATALOG
-	// Send voltages to serial output.
-	PutStr("adc00,");
-	DecimalFormat(adc00, 4, 0);
-	PutStr(",V00,");
-	DecimalFormat(ADC2mv(adc00), 4, 3);
-	PutStr(",V0,");
-	DecimalFormat(ADC2mv(adc0), 4, 3);
-	PutStr(",V1,");
-	DecimalFormat(V1, 4, 3);
-	PutStr(",V2,");
-	DecimalFormat(V2, 4, 3);
-	PutStr(",avgVcc,");
-	DecimalFormat(avgVcc, 4, 3);
-	
-	PutStr("\nrawTo,");
-	DecimalFormat(raw_temp_value, 5, 2);
-#endif
-	
-	// Prepare to display the object temperature reading.
-	int16_t final_To = Convert(raw_temp_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, avgVcc, IR_TO_ORAL_OFFSET);
-	
-	int16_t final_Ta = 0;
-#if defined(DISPLAY_TA) || defined(DATALOG)
- #ifdef DATALOG
-	PutStr("\nrawTa,");
-	DecimalFormat(raw_Ta_value, 5, 2);
- #endif	
-	// Prepare to display the ambient temperature reading.
-	final_Ta = Convert(raw_Ta_value, MAX_DEG, MIN_DEG, DECIMALS, SCALE, avgVcc, 0);
-#endif
 
 	// T1.5 Transition to DisplayState.
 	TransitionDisplayState(final_To, final_Ta, V2);
@@ -1345,14 +1417,6 @@ static void ReadState()
 // Exit early if user releases and re-presses button (indicating they want a new reading).
 static void DisplayState(int16_t To, int16_t Ta, uint16_t testVcc)
 {
-#ifdef DISPLAY_TA
-	// Display ambient temperature briefly.
-	// Binary to decimal convert and send to display buffer.
-	DecimalDisplayPrep(Ta, MAX_DEG, MIN_DEG, DECIMALS+1, 1<<DECIMALS);
-	_delay_ms(200);
-	DisplayNms(1000);
-#endif
-	
 #ifdef DISP988
 	// For battery life test, always display 98.8 for consistency.
 	DecimalDisplayPrep(988, MAX_DEG, MIN_DEG, DECIMALS+1, 1<<DECIMALS);
@@ -1360,7 +1424,7 @@ static void DisplayState(int16_t To, int16_t Ta, uint16_t testVcc)
 	// Binary to decimal convert and send to display buffer.
 	DecimalDisplayPrep(To, MAX_DEG, MIN_DEG, DECIMALS+1, 1<<DECIMALS);
 #endif
-	
+
 	// Illuminate display.
 	if (DisplayNms(HOLD_TIME_MS)) {
 		// We are here because user released and then pressed button again which we interpret to mean
@@ -1369,6 +1433,17 @@ static void DisplayState(int16_t To, int16_t Ta, uint16_t testVcc)
 		TransitionReadState();
 		return;
 	}
+
+#ifdef DISPLAY_TA
+	if (NewButtonState) {
+		// If NewButtonState is 1, user has been holding the button down all this time. Display ambient temperature briefly.
+		BlankDisplay();
+		_delay_ms(200);
+		// Binary to decimal convert and send to display buffer.
+		DecimalDisplayPrep(Ta, MAX_DEG, MIN_DEG, DECIMALS+1, 1<<DECIMALS);
+	}
+#endif
+
 	// If NewButtonState is 1, user has been holding the button down all this time. Continue displaying the temperature.
 	while (NewButtonState) {
 		DisplayNms(100);
